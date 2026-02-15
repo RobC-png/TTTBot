@@ -26,14 +26,11 @@ current_channel = None
 # EmojyTranslator must be defined before board_str
 def EmojyTranslator(text):
     if text == "-":
-        #return ":white_large_square:"
-        return "-"
+        return ":white_large_square:"
     if text == "X":
-        #return ":x:"
-        return "X"
+        return ":x:"
     if text == "O":
-        #return ":blue_circle:"
-        return "O"
+        return ":blue_circle:"
 
 # Helper to display the board as a string
 def board_str():
