@@ -28,6 +28,16 @@ game = GameState()
 
 # No text board needed anymore - buttons show everything!
 
+def get_emoji(text):
+    """Convert text to Discord emoji string"""
+    if text == "-":
+        return None  # No emoji for empty buttons
+    if text == "X":
+        return "❌"
+    if text == "O":
+        return "🔵"
+    return text
+
 
 def check_win(board):
     # Check rows
@@ -83,7 +93,8 @@ class TicTacToeButton(Button):
         self.position = position
         super().__init__(
             style=discord.ButtonStyle.secondary,
-            label="⬜",
+            label="\u200b",  # Zero-width space for clean white button appearance
+            custom_id=f"ttt_button_{position}",
             row=position // 3  # This creates the 3x3 grid layout
         )
     
@@ -113,9 +124,10 @@ class TicTacToeButton(Button):
         game.player_turn = False
         
         # Update button - Red X
-        self.label = "❌"
+        self.emoji = get_emoji("X")
+        self.label = None  # Remove label when using emoji
         self.disabled = True
-        self.style = discord.ButtonStyle.danger
+        self.style = discord.ButtonStyle.secondary
         
         # Check if player won
         result = check_win(game.board)
@@ -183,7 +195,7 @@ class TicTacToeButton(Button):
 
 class TicTacToeView(View):
     def __init__(self):
-        super().__init__(timeout=300)  # 5 minute timeout
+        super().__init__()  # IMPORTANT: This initializes the View properly - don't remove!
         
         # Create 3x3 grid of buttons
         for i in range(9):
@@ -191,25 +203,17 @@ class TicTacToeView(View):
             
             # Update button based on board state
             if game.board[i] == "X":
-                button.label = "❌"
+                button.emoji = get_emoji("X")
+                button.label = None
                 button.disabled = True
-                button.style = discord.ButtonStyle.danger  # Red
+                button.style = discord.ButtonStyle.secondary
             elif game.board[i] == "O":
-                button.label = "🔵"
+                button.emoji = get_emoji("O")
+                button.label = None
                 button.disabled = True
-                button.style = discord.ButtonStyle.primary  # Blue
+                button.style = discord.ButtonStyle.secondary
             
             self.add_item(button)
-    
-    async def on_timeout(self):
-        # Disable all buttons when timeout occurs
-        for item in self.children:
-            item.disabled = True
-        if game.message:
-            await game.message.edit(
-                content=f"{game.message.content}\n\n⏰ **Game timed out!**",
-                view=self
-            )
 
 
 @bot.command()
@@ -227,7 +231,7 @@ async def ttt(ctx):
     
     view = TicTacToeView()
     game.message = await ctx.send(
-        f"**Tic-Tac-Toe Started!**\n{ctx.author.mention}, you are ❌. Computer is 🔵. Your turn!",
+        f"**Tic-Tac-Toe Started!**\n{ctx.author.mention}, you are {get_emoji('X')}. Computer is {get_emoji('O')}. Your turn!",
         view=view
     )
 
