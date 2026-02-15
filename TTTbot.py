@@ -1,8 +1,8 @@
 import discord
 from discord.ext import commands
-import os  # for the token, which is in another file
+from discord.ui import Button, View
+import os
 from random import randint
-from time import sleep
 
 # Read token from token.txt
 def get_token():
@@ -14,195 +14,228 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 
-playersTurn = True
-Move_is_Viable = False
-game_is_running = False
-gameWon = False
-kästchen = ["-", "-", "-", "-", "-", "-", "-", "-", "-"]
-Winner = "-"
-current_channel = None
+# Game state
+class GameState:
+    def __init__(self):
+        self.board = ["-", "-", "-", "-", "-", "-", "-", "-", "-"]
+        self.player_turn = True
+        self.game_active = False
+        self.message = None
+        self.player_id = None
+
+game = GameState()
 
 
-# EmojyTranslator must be defined before board_str
-def EmojyTranslator(text):
-    if text == "-":
-        return ":white_large_square:"
-    if text == "X":
-        return ":x:"
-    if text == "O":
-        return ":blue_circle:"
+# No text board needed anymore - buttons show everything!
 
-# Helper to display the board as a string
-def board_str():
-    return (f"{EmojyTranslator(kästchen[0])} {EmojyTranslator(kästchen[1])} {EmojyTranslator(kästchen[2])}\n"
-            f"{EmojyTranslator(kästchen[3])} {EmojyTranslator(kästchen[4])} {EmojyTranslator(kästchen[5])}\n"
-            f"{EmojyTranslator(kästchen[6])} {EmojyTranslator(kästchen[7])} {EmojyTranslator(kästchen[8])}")
 
-# Discord bot commands
+def check_win(board):
+    # Check rows
+    for i in range(0, 9, 3):
+        if board[i] == board[i+1] == board[i+2] and board[i] != "-":
+            return board[i]
+    
+    # Check columns
+    for i in range(3):
+        if board[i] == board[i+3] == board[i+6] and board[i] != "-":
+            return board[i]
+    
+    # Check diagonals
+    if board[0] == board[4] == board[8] and board[0] != "-":
+        return board[0]
+    if board[2] == board[4] == board[6] and board[2] != "-":
+        return board[2]
+    
+    # Check draw
+    if "-" not in board:
+        return "draw"
+    
+    return None
+
+
+def computer_move():
+    """Simple AI that tries to win, then blocks, then picks random"""
+    available = [i for i, x in enumerate(game.board) if x == "-"]
+    
+    # Try to win
+    for move in available:
+        test_board = game.board.copy()
+        test_board[move] = "O"
+        if check_win(test_board) == "O":
+            game.board[move] = "O"
+            return
+    
+    # Try to block player
+    for move in available:
+        test_board = game.board.copy()
+        test_board[move] = "X"
+        if check_win(test_board) == "X":
+            game.board[move] = "O"
+            return
+    
+    # Random move
+    move = available[randint(0, len(available) - 1)]
+    game.board[move] = "O"
+
+
+class TicTacToeButton(Button):
+    def __init__(self, position):
+        self.position = position
+        super().__init__(
+            style=discord.ButtonStyle.secondary,
+            label="⬜",
+            row=position // 3  # This creates the 3x3 grid layout
+        )
+    
+    async def callback(self, interaction: discord.Interaction):
+        # Check if it's the right player
+        if interaction.user.id != game.player_id:
+            await interaction.response.send_message("This isn't your game!", ephemeral=True)
+            return
+        
+        # Check if game is active
+        if not game.game_active:
+            await interaction.response.send_message("No active game!", ephemeral=True)
+            return
+        
+        # Check if it's player's turn
+        if not game.player_turn:
+            await interaction.response.send_message("It's not your turn!", ephemeral=True)
+            return
+        
+        # Check if position is empty
+        if game.board[self.position] != "-":
+            await interaction.response.send_message("That spot is taken!", ephemeral=True)
+            return
+        
+        # Make player move
+        game.board[self.position] = "X"
+        game.player_turn = False
+        
+        # Update button - Red X
+        self.label = "❌"
+        self.disabled = True
+        self.style = discord.ButtonStyle.danger
+        
+        # Check if player won
+        result = check_win(game.board)
+        if result == "X":
+            await interaction.response.edit_message(
+                content=f"🎉 **You win!**",
+                view=self.view
+            )
+            game.game_active = False
+            # Disable all buttons
+            for item in self.view.children:
+                item.disabled = True
+            await interaction.edit_original_response(view=self.view)
+            return
+        elif result == "draw":
+            await interaction.response.edit_message(
+                content=f"🤝 **It's a draw!**",
+                view=self.view
+            )
+            game.game_active = False
+            for item in self.view.children:
+                item.disabled = True
+            await interaction.edit_original_response(view=self.view)
+            return
+        
+        # Computer's turn
+        await interaction.response.edit_message(
+            content=f"💭 Computer is thinking...",
+            view=self.view
+        )
+        
+        computer_move()
+        game.player_turn = True
+        
+        # Update view with computer's move
+        new_view = TicTacToeView()
+        
+        result = check_win(game.board)
+        if result == "O":
+            await interaction.edit_original_response(
+                content=f"🤖 **Computer wins!**",
+                view=new_view
+            )
+            game.game_active = False
+            for item in new_view.children:
+                item.disabled = True
+            await interaction.edit_original_response(view=new_view)
+            return
+        elif result == "draw":
+            await interaction.edit_original_response(
+                content=f"🤝 **It's a draw!**",
+                view=new_view
+            )
+            game.game_active = False
+            for item in new_view.children:
+                item.disabled = True
+            await interaction.edit_original_response(view=new_view)
+            return
+        
+        await interaction.edit_original_response(
+            content=f"Your turn!",
+            view=new_view
+        )
+
+
+class TicTacToeView(View):
+    def __init__(self):
+        super().__init__(timeout=300)  # 5 minute timeout
+        
+        # Create 3x3 grid of buttons
+        for i in range(9):
+            button = TicTacToeButton(i)
+            
+            # Update button based on board state
+            if game.board[i] == "X":
+                button.label = "❌"
+                button.disabled = True
+                button.style = discord.ButtonStyle.danger  # Red
+            elif game.board[i] == "O":
+                button.label = "🔵"
+                button.disabled = True
+                button.style = discord.ButtonStyle.primary  # Blue
+            
+            self.add_item(button)
+    
+    async def on_timeout(self):
+        # Disable all buttons when timeout occurs
+        for item in self.children:
+            item.disabled = True
+        if game.message:
+            await game.message.edit(
+                content=f"{game.message.content}\n\n⏰ **Game timed out!**",
+                view=self
+            )
+
+
 @bot.command()
 async def ttt(ctx):
-    global game_is_running, playersTurn, kästchen, Winner, gameWon, current_channel
-    if game_is_running:
-        await ctx.send("A game is already running!")
+    """Start a new Tic-Tac-Toe game"""
+    if game.game_active:
+        await ctx.send("A game is already running! Finish it first.")
         return
-    game_is_running = True
-    playersTurn = True
-    kästchen = ["-", "-", "-", "-", "-", "-", "-", "-", "-"]
-    Winner = "-"
-    gameWon = False
-    current_channel = ctx.channel
-    await ctx.send("Tic-Tac-Toe started! Use !move <1-9> to play.\n" + board_str())
-
-@bot.command()
-async def move(ctx, pos: int):
-    global playersTurn, kästchen, gameWon, game_is_running
-    if not game_is_running:
-        await ctx.send("No game running. Start with !ttt")
-        return
-    if not playersTurn:
-        await ctx.send("It's not your turn!")
-        return
-    if pos < 1 or pos > 9:
-        await ctx.send("Invalid move. Use 1-9.")
-        return
-    idx = pos - 1
-    if not emtpyCheck(idx):
-        await ctx.send("That spot is already taken!")
-        return
-    PlayerInput(idx)
-    await ctx.send("You moved:\n" + board_str())
-    # Check win/draw
-    result = Wincheck(kästchen)
-    if result == "X":
-        await ctx.send("You win!")
-        Fin("X")
-        return
-    elif result == "draw":
-        await ctx.send("Draw!")
-        Fin("-")
-        return
-    # Computer turn
-    playersTurn = False
-    ComputerTurn(kästchen)
-    await ctx.send("Computer moved:\n" + board_str())
-    result = Wincheck(kästchen)
-    if result == "O":
-        await ctx.send("Computer wins!")
-        Fin("O")
-        return
-    elif result == "draw":
-        await ctx.send("Draw!")
-        Fin("-")
-        return
-    playersTurn = True
-
-
-def emtpyCheck(k):
-    if kästchen[k] != "-":
-        return False
-    else:
-        return True
-
-#Überschreibt eine Zelle im Grid
-def overwriting(k, zeichen, liste):
-    liste[k] = zeichen
-
-#PlayerTurn
-def PlayerInput(k):
-    overwriting(k, "X", kästchen)
-
-def Wincheck(kästchen):
-    #1. Reihe
-    if kästchen[0] == kästchen[1] == kästchen[2] and kästchen[0] != "-":
-        return f"{kästchen[0]}"
-
-    #2. Reihe
-    if kästchen[3] == kästchen[4] == kästchen[5] and kästchen[3] != "-":
-        return f"{kästchen[3]}"
-
-    #3. Reihe
-    if kästchen[6] == kästchen[7] == kästchen[8] and kästchen[6] != "-":
-        return f"{kästchen[6]}"
-
-    #1. Spalte
-    if kästchen[0] == kästchen[3] == kästchen[6] and kästchen[0] != "-":
-        return f"{kästchen[0]}"
-
-    #2. Spalte
-    if kästchen[1] == kästchen[4] == kästchen[7] and kästchen[1] != "-":
-        return f"{kästchen[1]}"
-
-    #3. Spalte
-    if kästchen[2] == kästchen[5] == kästchen[8] and kästchen[2] != "-":
-        return f"{kästchen[2]}"
-
-    #LORU Diagonal
-    if kästchen[0] == kästchen[4] == kästchen[8] and kästchen[0] != "-":
-        return f"{kästchen[0]}"
-
-    #ROLU Diagonal
-    if kästchen[2] == kästchen[4] == kästchen[6] and kästchen[2] != "-":
-        return f"{kästchen[2]}"
     
-    #Draw
-    if kästchen[0] != "-" and kästchen[1] != "-" and kästchen[2] != "-" and kästchen[3] != "-" and kästchen[4] != "-" and kästchen[5] != "-" and kästchen[6] != "-" and kästchen[7] != "-" and kästchen[8] != "-":
-        return "draw"
-
-    else:
-        return "nothing"
-
-
-#ComputerTurn
-def ComputerTurn(Spielfeld):
-    global kästchen
-
-    #Computer "AI"
-    Move_is_Viable = False
-    #Macht eine Liste aller verfügbaren Moves
-    available_Moves = []
-    for i in range(9):
-        if kästchen[i] == "-":
-            available_Moves.append(i)
+    # Reset game
+    game.board = ["-", "-", "-", "-", "-", "-", "-", "-", "-"]
+    game.player_turn = True
+    game.game_active = True
+    game.player_id = ctx.author.id
     
-    #Erstellt Listen um die Moves einzuordnen
-    O_wins = []
-    other_outcomes = []
+    view = TicTacToeView()
+    game.message = await ctx.send(
+        f"**Tic-Tac-Toe Started!**\n{ctx.author.mention}, you are ❌. Computer is 🔵. Your turn!",
+        view=view
+    )
 
-    #Checkt ob die Moves "Gut" sind
-    #Loopt über alle Möglichen Moves
-    for i in range(len(available_Moves)):
-        #Ertsellt eine Kopie des Jetzigen Spielfelds (FIXED: now creates actual copy)
-        field_temp = kästchen.copy()
 
-        #Tragt den möglichen Move in das kopierte Spielfeld ein
-        overwriting(available_Moves[i], "O", field_temp)
-
-        #Checkt ob der Move einen Win als Resultat hat
-        if Wincheck(field_temp) == "O":
-            #Wenn ja fügt es den Move zu den Moves hinzu, die zu einem Win führen
-            O_wins.append(available_Moves[i])
-        else:
-            #Wenn nicht fügt es den Move zu allen anderen Moves hinzu
-            other_outcomes.append(available_Moves[i])
-
-    #Picked 1 Option der Liste (nice)
-    if len(O_wins) > 0:
-        pick = O_wins[randint(0, len(O_wins) - 1)]
-    else:
-        pick = other_outcomes[randint(0, len(other_outcomes) - 1)]
-    
-    #Überschreibt das gepickte Feld mit "O"
-    overwriting(pick, "O", kästchen)
-
-def Fin(Winner_):
-    global Winner
-    Winner = Winner_
-    global kästchen
-    kästchen = ["-", "-", "-", "-", "-", "-", "-", "-", "-"]
-    global game_is_running
-    game_is_running = False
-    global gameWon
-    gameWon = True
+@bot.event
+async def on_ready():
+    print(f'{bot.user} has connected to Discord!')
+    print(f'Bot is ready to play Tic-Tac-Toe!')
 
 
 # Run the bot
